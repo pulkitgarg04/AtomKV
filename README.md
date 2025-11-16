@@ -1,6 +1,8 @@
 # AtomKV
 
-AtomKV is a lightweight in-memory key-value store featuring a simple text protocol over TCP (GET/SET/DEL/TTL/PERSIST), TTL support, LRU-based eviction, append-only file (AOF) persistence, and a minimal HTTP endpoint for metrics.
+![AtomKV](https://socialify.git.ci/pulkitgarg04/AtomKV/image?font=JetBrains+Mono&language=1&name=1&owner=1&pattern=Charlie+Brown&theme=Dark)
+
+**AtomKV** is a lightweight in-memory key-value store featuring a simple text protocol over TCP (GET/SET/DEL/TTL/PERSIST), TTL support, LRU-based eviction, append-only file (AOF) persistence, and a minimal HTTP endpoint for metrics.
 
 ## Requirements
 
@@ -8,31 +10,51 @@ AtomKV is a lightweight in-memory key-value store featuring a simple text protoc
 - Maven 3.8+ (the project uses standard Maven lifecycle).
 
 ## Build & test
+- Build (skip tests):
+    ```bash
+    mvn -q -DskipTests package
+    ```
 
-Build (skip tests):
+- Run tests:
+    ```bash
+    mvn clean test
+    ```
 
-```bash
-mvn -q -DskipTests package
-```
-
-Run tests:
 ## Run the server
 
 The server stores its append-only file at `~/.atomkv/appendonly.aof` by default.
-Defaults:
+
+**Defaults**:
 - TCP: 6379
 - Metrics HTTP: 8080
 
-Run the fat-jar produced by the `mvn package` step:
+Run the jar produced by the `mvn package` step (artifactId/version come from `pom.xml`):
 
 ```bash
-java -jar target/atomkv-0.1.0.jar
+java -jar target/atomkv-1.0.jar
 ```
-
-
 
 ```bash
-mvn clean test
+chmod +x scripts/atomkv.sh
+./scripts/atomkv.sh
 ```
 
-The server stores its append-only file at `~/.atomkv/appendonly.aof` by default.
+## Client example (using netcat)
+
+You can connect to the TCP port with `nc` and use the simple text protocol. Example session:
+
+```bash
+# connect
+nc localhost 6379
+# After connect you should see:
+OK AtomKV
+
+SET mykey hello
+# +OK
+GET mykey
+# +hello
+DEL mykey
+# :1
+QUIT
+# +BYE
+```
