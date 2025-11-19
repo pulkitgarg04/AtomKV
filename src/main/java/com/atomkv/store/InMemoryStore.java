@@ -4,6 +4,7 @@ import com.atomkv.eviction.EvictionPolicy;
 import com.atomkv.eviction.LRUEvictionPolicy;
 import com.atomkv.persistence.AppendOnlyFile;
 
+import java.util.Map;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.*;
@@ -115,8 +116,7 @@ public class InMemoryStore {
 
     private void cleanupExpired() {
         long now = System.currentTimeMillis();
-
-        for (var entry : map.entrySet()) {
+        for (Map.Entry<String, ValueWrapper> entry : map.entrySet()) {
             ValueWrapper v = entry.getValue();
             if (v.getExpireAtMillis() > 0 && v.getExpireAtMillis() <= now) {
                 map.remove(entry.getKey(), v);
@@ -153,6 +153,57 @@ public class InMemoryStore {
         if (aof != null) {
             aof.close();
         }
+    }
+
+    /**
+     * Return a shallow copy snapshot of current key->value pairs.
+     * Expired entries are skipped.
+     */
+    public Map<String, String> snapshot() {
+        Map<String, String> copy = new java.util.HashMap<>();
+        long now = System.currentTimeMillis();
+
+        for (Map.Entry<String, ValueWrapper> entry : map.entrySet()) {
+            ValueWrapper v = entry.getValue();
+            if (v == null) continue;
+            long exp = v.getExpireAtMillis();
+            if (exp > 0 && exp <= now) {
+                // skip expired
+                continue;
+            }
+
+            copy.put(entry.getKey(), v.getValue());
+        }
+
+        return copy;
+    }
+
+    /**
+     * Return a snapshot containing value and metadata (ttl in ms and expireAt epoch ms) for each key.
+     * Expired entries are skipped.
+     */
+    public Map<String, Map<String, Object>> snapshotWithMetadata() {
+        Map<String, Map<String, Object>> out = new java.util.HashMap<>();
+        long now = System.currentTimeMillis();
+
+        for (Map.Entry<String, ValueWrapper> entry : map.entrySet()) {
+            ValueWrapper v = entry.getValue();
+            if (v == null) continue;
+            long exp = v.getExpireAtMillis();
+            if (exp > 0 && exp <= now) {
+                continue; // expired
+            }
+
+            Map<String, Object> meta = new java.util.HashMap<>();
+            meta.put("value", v.getValue());
+            long ttl = (exp <= 0) ? -1L : Math.max(0L, exp - now);
+            meta.put("ttl", ttl);
+            meta.put("expireAt", exp);
+
+            out.put(entry.getKey(), meta);
+        }
+
+        return out;
     }
 
     public void applyCommandFromAOF(String line) {
