@@ -5,6 +5,9 @@ import com.atomkv.eviction.LRUEvictionPolicy;
 import com.atomkv.persistence.AppendOnlyFile;
 
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.regex.Pattern;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.*;
@@ -91,7 +94,7 @@ public class InMemoryStore {
         ValueWrapper vw = map.get(key);
 
         if (vw == null) {
-            return -2; // key does not exist
+            return -2;
         }
 
         long ttl = vw.ttlMillis();
@@ -140,6 +143,121 @@ public class InMemoryStore {
         return map.size();
     }
 
+    public boolean exists(String key) {
+        ValueWrapper vw = map.get(key);
+
+        if (vw == null) {
+            return false;
+        }
+
+        if (vw.isExpired()) {
+            map.remove(key);
+            evictionPolicy.recordRemove(key);
+            return false;
+        }
+
+        return true;
+    }
+
+    public List<String> keys(String pattern) {
+        if (pattern == null) pattern = "*";
+        String[] parts = pattern.split("\\*", -1);
+        StringBuilder regex = new StringBuilder();
+        regex.append('^');
+        for (int i = 0; i < parts.length; i++) {
+            regex.append(Pattern.quote(parts[i]));
+            if (i < parts.length - 1) {
+                regex.append(".*");
+            }
+        }
+        regex.append('$');
+        Pattern p = Pattern.compile(regex.toString());
+        List<String> out = new ArrayList<>();
+        long now = System.currentTimeMillis();
+
+        for (Map.Entry<String, ValueWrapper> entry : map.entrySet()) {
+            String k = entry.getKey();
+            ValueWrapper v = entry.getValue();
+            if (v == null) continue;
+            long exp = v.getExpireAtMillis();
+            if (exp > 0 && exp <= now) continue;
+            if (p.matcher(k).matches()) {
+                out.add(k);
+            }
+        }
+
+        return out;
+    }
+
+    public String type(String key) {
+        ValueWrapper vw = map.get(key);
+
+        if (vw == null) {
+            return "none";
+        }
+
+        if (vw.isExpired()) {
+            map.remove(key);
+            evictionPolicy.recordRemove(key);
+            return "none";
+        }
+
+        if (vw.getExpireAtMillis() > 0) {
+            return "ttl_key";
+        }
+
+        String v = vw.getValue();
+        if (v == null) return "string";
+
+        try {
+            Long.parseLong(v);
+            return "number";
+        } catch (NumberFormatException ignored) {}
+
+        try {
+            Double.parseDouble(v);
+            return "number";
+        } catch (NumberFormatException ignored) {}
+
+        return "string";
+    }
+
+    public void flushAll() {
+        map.clear();
+
+        if (aof != null) {
+            aof.append("FLUSHALL");
+        }
+    }
+
+    public int append(String key, String suffix) {
+        ValueWrapper vw = map.get(key);
+
+        if (vw == null || vw.isExpired()) {
+            set(key, suffix, null);
+            return suffix.length();
+        }
+
+        vw.appendValue(suffix);
+
+        if (aof != null) {
+            aof.append("APPEND " + escape(key) + " " + escape(suffix));
+        }
+
+        return vw.getValue() == null ? 0 : vw.getValue().length();
+    }
+
+    public long strlen(String key) {
+        ValueWrapper vw = map.get(key);
+
+        if (vw == null || vw.isExpired()) {
+            return 0;
+        }
+
+        String v = vw.getValue();
+        return v == null ? 0 : v.length();
+    }
+
     public long hits() {
         return hits.get();
     }
@@ -168,7 +286,6 @@ public class InMemoryStore {
             if (v == null) continue;
             long exp = v.getExpireAtMillis();
             if (exp > 0 && exp <= now) {
-                // skip expired
                 continue;
             }
 
@@ -191,7 +308,7 @@ public class InMemoryStore {
             if (v == null) continue;
             long exp = v.getExpireAtMillis();
             if (exp > 0 && exp <= now) {
-                continue; // expired
+                continue;
             }
 
             Map<String, Object> meta = new java.util.HashMap<>();
@@ -254,6 +371,21 @@ public class InMemoryStore {
                     break;
                 }
 
+                case "APPEND": {
+                    if (parts.length >= 3) {
+                        String key = unescape(parts[1]);
+                        String value = unescape(parts[2]);
+                        append(key, value);
+                    }
+
+                    break;
+                }
+
+                case "FLUSHALL": {
+                    flushAll();
+                    break;
+                }
+
                 default:
                     // ignore unknown commands
             }
@@ -262,7 +394,6 @@ public class InMemoryStore {
         }
     }
 
-    // wrap spaces/newlines in quotes
     private static String escape(String s) {
         if (s == null) {
             return "";

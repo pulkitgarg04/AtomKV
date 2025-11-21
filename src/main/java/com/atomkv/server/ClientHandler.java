@@ -35,6 +35,73 @@ public class ClientHandler implements Runnable {
                 String cmd = parts[0].toUpperCase(Locale.ROOT);
                 
                 switch (cmd) {
+                    case "EXISTS": {
+                        if (parts.length < 2) {
+                            out.write("-ERR wrong number of args\n");
+                            break;
+                        }
+
+                        boolean e = store.exists(parts[1]);
+                        out.write((e ? ":1\n" : ":0\n"));
+                        break;
+                    }
+
+                    case "KEYS": {
+                        String pattern = "*";
+                        if (parts.length >= 2) pattern = parts[1];
+
+                        var keys = store.keys(pattern);
+                        if (keys.isEmpty()) {
+                            out.write("$-1\n");
+                        } else {
+                            for (String k : keys) {
+                                out.write("+" + k + "\n");
+                            }
+                        }
+
+                        break;
+                    }
+
+                    case "TYPE": {
+                        if (parts.length < 2) {
+                            out.write("-ERR wrong number of args\n");
+                            break;
+                        }
+
+                        String t = store.type(parts[1]);
+                        out.write("+" + t + "\n");
+                        break;
+                    }
+
+                    case "FLUSHALL": {
+                        store.flushAll();
+                        out.write("+OK\n");
+                        break;
+                    }
+
+                    case "APPEND": {
+                        if (parts.length < 3) {
+                            out.write("-ERR wrong number of args\n");
+                            break;
+                        }
+
+                        String key = parts[1];
+                        String value = parts[2];
+                        store.append(key, value);
+                        out.write("+OK\n");
+                        break;
+                    }
+
+                    case "STRLEN": {
+                        if (parts.length < 2) {
+                            out.write("-ERR wrong number of args\n");
+                            break;
+                        }
+
+                        long len = store.strlen(parts[1]);
+                        out.write(":" + len + "\n");
+                        break;
+                    }
                     case "GET": {
                         if (parts.length < 2) {
                             out.write("-ERR wrong number of args\n");

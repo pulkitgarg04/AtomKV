@@ -3,7 +3,7 @@ package com.atomkv.store;
 import java.util.Objects;
 
 public class ValueWrapper {
-    private final String value;
+    private volatile String value;
     private volatile long expireAtMillis; // -1 means no expiration
 
     public ValueWrapper(String value, long expireAtMillis) {
@@ -13,6 +13,18 @@ public class ValueWrapper {
 
     public String getValue() {
         return value;
+    }
+
+    public void setValue(String value) {
+        this.value = value;
+    }
+
+    public void appendValue(String suffix) {
+        if (this.value == null) {
+            this.value = suffix;
+        } else {
+            this.value = this.value + suffix;
+        }
     }
 
     public long getExpireAtMillis() {
