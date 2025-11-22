@@ -119,8 +119,10 @@ public class InMemoryStore {
 
     private void cleanupExpired() {
         long now = System.currentTimeMillis();
+        
         for (Map.Entry<String, ValueWrapper> entry : map.entrySet()) {
             ValueWrapper v = entry.getValue();
+            
             if (v.getExpireAtMillis() > 0 && v.getExpireAtMillis() <= now) {
                 map.remove(entry.getKey(), v);
                 evictionPolicy.recordRemove(entry.getKey());
@@ -159,18 +161,92 @@ public class InMemoryStore {
         return true;
     }
 
+    public long incr(String key) {
+        while (true) {
+            ValueWrapper vw = map.get(key);
+
+            if (vw == null || vw.isExpired()) {
+                set(key, "1", null);
+                
+                if (aof != null) {
+                    aof.append("INCR " + escape(key));
+                }
+
+                return 1;
+            }
+
+            String v = vw.getValue();
+            long cur = 0;
+            try {
+                cur = Long.parseLong(v == null ? "0" : v);
+            } catch (NumberFormatException e) {
+                throw new RuntimeException("value is not an integer");
+            }
+
+            long next = cur + 1;
+            vw.setValue(Long.toString(next));
+
+            if (aof != null) {
+                aof.append("INCR " + escape(key));
+            }
+
+            return next;
+        }
+    }
+
+    public long decr(String key) {
+        while (true) {
+            ValueWrapper vw = map.get(key);
+
+            if (vw == null || vw.isExpired()) {
+                set(key, "-1", null);
+                
+                if (aof != null) {
+                    aof.append("DECR " + escape(key));
+                }
+                
+                return -1;
+            }
+
+            String v = vw.getValue();
+            long cur = 0;
+
+            try {
+                cur = Long.parseLong(v == null ? "0" : v);
+            } catch (NumberFormatException e) {
+                throw new RuntimeException("value is not an integer");
+            }
+
+            long next = cur - 1;
+            vw.setValue(Long.toString(next));
+
+            if (aof != null) {
+                aof.append("DECR " + escape(key));
+            }
+
+            return next;
+        }
+    }
+
     public List<String> keys(String pattern) {
-        if (pattern == null) pattern = "*";
+        if (pattern == null) {
+            pattern = "*";
+        }
+
         String[] parts = pattern.split("\\*", -1);
         StringBuilder regex = new StringBuilder();
         regex.append('^');
+
         for (int i = 0; i < parts.length; i++) {
             regex.append(Pattern.quote(parts[i]));
+
             if (i < parts.length - 1) {
                 regex.append(".*");
             }
         }
+
         regex.append('$');
+        
         Pattern p = Pattern.compile(regex.toString());
         List<String> out = new ArrayList<>();
         long now = System.currentTimeMillis();
@@ -178,15 +254,86 @@ public class InMemoryStore {
         for (Map.Entry<String, ValueWrapper> entry : map.entrySet()) {
             String k = entry.getKey();
             ValueWrapper v = entry.getValue();
-            if (v == null) continue;
+
+            if (v == null) {
+                continue;
+            }
+
             long exp = v.getExpireAtMillis();
-            if (exp > 0 && exp <= now) continue;
+
+            if (exp > 0 && exp <= now) {
+                continue;
+            }
+
             if (p.matcher(k).matches()) {
                 out.add(k);
             }
         }
 
         return out;
+    }
+
+    public java.util.List<String> mget(String... keys) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String k : keys) {
+            var v = get(k);
+            out.add(v.orElse(null));
+        }
+
+        return out;
+    }
+
+    public void mset(String... kv) {
+        if (kv == null || kv.length % 2 != 0) {
+            return;
+        }
+
+        for (int i = 0; i < kv.length; i += 2) {
+            String k = kv[i];
+            String v = kv[i + 1];
+            set(k, v, null);
+        }
+
+        if (aof != null) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("MSET");
+
+            for (int i = 0; i < kv.length; i += 2) {
+                sb.append(' ').append(escape(kv[i])).append(' ').append(escape(kv[i + 1]));
+            }
+
+            aof.append(sb.toString());
+        }
+    }
+
+    public int expire(String key, long seconds) {
+        ValueWrapper vw = map.get(key);
+        if (vw == null || vw.isExpired()) {
+            return 0;
+        }
+
+        long expireAt = System.currentTimeMillis() + seconds * 1000L;
+        vw.setExpireAtMillis(expireAt);
+
+        if (aof != null) {
+            aof.append("EXPIRE " + escape(key) + " " + Long.toString(seconds));
+        }
+
+        return 1;
+    }
+
+    public boolean rename(String key, String newKey) {
+        ValueWrapper vw = map.get(key);
+        if (vw == null || vw.isExpired()) return false;
+
+        map.put(newKey, vw);
+        map.remove(key);
+
+        if (aof != null) {
+            aof.append("RENAME " + escape(key) + " " + escape(newKey));
+        }
+
+        return true;
     }
 
     public String type(String key) {
@@ -283,7 +430,10 @@ public class InMemoryStore {
 
         for (Map.Entry<String, ValueWrapper> entry : map.entrySet()) {
             ValueWrapper v = entry.getValue();
-            if (v == null) continue;
+            if (v == null) {
+                continue;
+            }
+
             long exp = v.getExpireAtMillis();
             if (exp > 0 && exp <= now) {
                 continue;
@@ -305,7 +455,10 @@ public class InMemoryStore {
 
         for (Map.Entry<String, ValueWrapper> entry : map.entrySet()) {
             ValueWrapper v = entry.getValue();
-            if (v == null) continue;
+            if (v == null) {
+                continue;
+            }
+
             long exp = v.getExpireAtMillis();
             if (exp > 0 && exp <= now) {
                 continue;
@@ -313,6 +466,7 @@ public class InMemoryStore {
 
             Map<String, Object> meta = new java.util.HashMap<>();
             meta.put("value", v.getValue());
+            
             long ttl = (exp <= 0) ? -1L : Math.max(0L, exp - now);
             meta.put("ttl", ttl);
             meta.put("expireAt", exp);
@@ -376,6 +530,50 @@ public class InMemoryStore {
                         String key = unescape(parts[1]);
                         String value = unescape(parts[2]);
                         append(key, value);
+                    }
+
+                    break;
+                }
+
+                case "INCR": {
+                    if (parts.length >= 2) {
+                        incr(unescape(parts[1]));
+                    }
+
+                    break;
+                }
+
+                case "DECR": {
+                    if (parts.length >= 2) {
+                        decr(unescape(parts[1]));
+                    }
+
+                    break;
+                }
+
+                case "MSET": {
+                    if (parts.length >= 3) {
+                        String[] kv = new String[parts.length - 1];
+                        for (int i = 1; i < parts.length; i++) kv[i - 1] = unescape(parts[i]);
+                        mset(kv);
+                    }
+
+                    break;
+                }
+
+                case "EXPIRE": {
+                    if (parts.length >= 3) {
+                        String key = unescape(parts[1]);
+                        long secs = Long.parseLong(parts[2]);
+                        expire(key, secs);
+                    }
+
+                    break;
+                }
+
+                case "RENAME": {
+                    if (parts.length >= 3) {
+                        rename(unescape(parts[1]), unescape(parts[2]));
                     }
 
                     break;

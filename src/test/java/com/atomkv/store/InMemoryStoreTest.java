@@ -96,4 +96,35 @@ public class InMemoryStoreTest {
         assertTrue(store.get("h").isPresent());
         assertEquals(hitsBefore + 1, store.hits());
     }
+
+    @Test
+    public void testIncrDecrMgetMsetExpireRename() throws Exception {
+        store = new InMemoryStore(100, null);
+
+        long v1 = store.incr("pageviews");
+        assertEquals(1, v1);
+        long v2 = store.incr("pageviews");
+        assertEquals(2, v2);
+        long v3 = store.decr("pageviews");
+        assertEquals(1, v3);
+
+        store.mset("u:1", "Alice", "u:2", "Bob");
+        java.util.List<String> got = store.mget("u:1", "u:2", "u:3");
+        assertEquals(3, got.size());
+        assertEquals("Alice", got.get(0));
+        assertEquals("Bob", got.get(1));
+        assertNull(got.get(2));
+
+        store.set("sess:1", "x", null);
+        int ok = store.expire("sess:1", 1);
+        assertEquals(1, ok);
+        Thread.sleep(1200);
+        assertFalse(store.exists("sess:1"));
+
+        store.set("old", "v", null);
+        boolean ren = store.rename("old", "new");
+        assertTrue(ren);
+        assertFalse(store.exists("old"));
+        assertTrue(store.exists("new"));
+    }
 }

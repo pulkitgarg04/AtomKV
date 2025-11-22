@@ -31,7 +31,7 @@ public class ClientHandler implements Runnable {
                     continue;
                 }
 
-                String[] parts = line.split(" ", 4);
+                String[] parts = line.split(" ");
                 String cmd = parts[0].toUpperCase(Locale.ROOT);
                 
                 switch (cmd) {
@@ -92,6 +92,28 @@ public class ClientHandler implements Runnable {
                         break;
                     }
 
+                    case "INCR": {
+                        if (parts.length < 2) {
+                            out.write("-ERR wrong number of args\n");
+                            break;
+                        }
+
+                        long v = store.incr(parts[1]);
+                        out.write(":" + v + "\n");
+                        break;
+                    }
+
+                    case "DECR": {
+                        if (parts.length < 2) {
+                            out.write("-ERR wrong number of args\n");
+                            break;
+                        }
+
+                        long v = store.decr(parts[1]);
+                        out.write(":" + v + "\n");
+                        break;
+                    }
+
                     case "STRLEN": {
                         if (parts.length < 2) {
                             out.write("-ERR wrong number of args\n");
@@ -111,6 +133,69 @@ public class ClientHandler implements Runnable {
                         var val = store.get(parts[1]);
                         out.write(val.map(v -> "+" + v + "\n").orElse("$-1\n"));
                         
+                        break;
+                    }
+                    
+                    case "MGET": {
+                        if (parts.length < 2) {
+                            out.write("-ERR wrong number of args\n");
+                            break;
+                        }
+
+                        String[] keys = new String[parts.length - 1];
+                        System.arraycopy(parts, 1, keys, 0, keys.length);
+                        var vals = store.mget(keys);
+                        for (String vv : vals) {
+                            if (vv == null) out.write("$-1\n");
+                            else out.write("+" + vv + "\n");
+                        }
+
+                        break;
+                    }
+
+                    case "MSET": {
+                        if (parts.length < 3 || (parts.length - 1) % 2 != 0) {
+                            out.write("-ERR wrong number of args\n");
+                            break;
+                        }
+
+                        String[] kv = new String[parts.length - 1];
+                        System.arraycopy(parts, 1, kv, 0, kv.length);
+                        store.mset(kv);
+                        out.write("+OK\n");
+                        break;
+                    }
+
+                    case "EXPIRE": {
+                        if (parts.length < 3) {
+                            out.write("-ERR wrong number of args\n");
+                            break;
+                        }
+
+                        try {
+                            long secs = Long.parseLong(parts[2]);
+                            int ok = store.expire(parts[1], secs);
+                            out.write(":" + ok + "\n");
+                        } catch (NumberFormatException e) {
+                            out.write("-ERR invalid number\n");
+                        }
+
+                        break;
+                    }
+
+                    case "RENAME": {
+                        if (parts.length < 3) {
+                            out.write("-ERR wrong number of args\n");
+                            break;
+                        }
+
+                        boolean ok = store.rename(parts[1], parts[2]);
+                        out.write((ok ? "+OK\n" : "-ERR no such key\n"));
+                        break;
+                    }
+
+                    case "PING": {
+                        out.write("+PONG\n");
                         break;
                     }
                     
