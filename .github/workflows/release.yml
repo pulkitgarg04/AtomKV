@@ -1,0 +1,123 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Triggers on version tags like v1.0, v2.0.1, etc.
+  workflow_dispatch:  # Allows manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  build-jar:
+    name: Build JAR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build with Maven
+        run: mvn clean package -DskipTests
+
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: atomkv-jar
+          path: target/atomkv-*.jar
+          if-no-files-found: error
+
+  build-native:
+    name: Build Native - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: atomkv-linux
+            extension: ""
+          - os: windows-latest
+            artifact: atomkv-windows
+            extension: ".exe"
+          - os: macos-latest
+            artifact: atomkv-macos
+            extension: ""
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          native-image-job-reports: 'true'
+
+      - name: Build with Maven
+        run: mvn clean package -DskipTests
+
+      - name: Build Native Image (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          native-image -jar target/atomkv-1.0.jar \
+            --no-fallback \
+            -H:Name=${{ matrix.artifact }} \
+            -H:+ReportExceptionStackTraces \
+            --enable-url-protocols=http
+
+      - name: Build Native Image (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          native-image -jar target/atomkv-1.0.jar --no-fallback -H:Name=${{ matrix.artifact }} -H:+ReportExceptionStackTraces --enable-url-protocols=http
+
+      - name: Upload native artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}${{ matrix.extension }}
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: [build-jar, build-native]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          cp artifacts/atomkv-jar/*.jar release/
+          cp artifacts/atomkv-linux/atomkv-linux release/
+          cp artifacts/atomkv-windows/atomkv-windows.exe release/
+          cp artifacts/atomkv-macos/atomkv-macos release/
+          chmod +x release/atomkv-linux release/atomkv-macos
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
